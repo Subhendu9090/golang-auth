@@ -1,0 +1,17 @@
+# Ignore Golang binary files
+*.exe
+*.out
+*.o
+*.a
+*.so
+*.bin
+*.log
+
+# Ignore vendor dependencies if using modules
+/vendor/
+
+# Ignore Go test cache
+*testresult*
+
+# Ignore environment files
+.env
