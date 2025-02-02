@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -31,5 +32,9 @@ func main() {
 		json.NewEncoder(w).Encode("Access get from api-2")
 	})
 
-	http.ListenAndServe(":"+port, r)
+	fmt.Println("Server started on " + port)
+	err := http.ListenAndServe(":"+port, r)
+	if err != nil {
+		panic(err)
+	}
 }
