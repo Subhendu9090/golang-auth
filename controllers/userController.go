@@ -24,11 +24,48 @@ var validate = validator.New()
 func HashPassword() {
 
 }
-func VerifyPassword() {
-
+func VerifyPassword(inComingPassword string, password string) (bool, string) {
+	err := bcrypt.CompareHashAndPassword([]byte(password), []byte(inComingPassword))
+	if err != nil {
+		return false, "Incorrect Password"
+	}
+	return true, "Correct Password"
 }
-func Login(w http.ResponseWriter, r *http.Request) {
 
+func Login(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	var user models.User
+	var existedUser models.User
+	defer cancel()
+	err := json.NewDecoder(r.Body).Decode(&user)
+
+	if err != nil {
+		http.Error(w, "pass the email and password", http.StatusNotFound)
+		return
+	}
+
+	err = userCollection.FindOne(ctx, bson.M{"email": user.Emil}).Decode(&existedUser)
+
+	if err != nil {
+		http.Error(w, "User Not found", http.StatusNotFound)
+		return
+	}
+	isPasswordCorrect, msg := VerifyPassword(*user.Password, *existedUser.Password)
+
+	if !isPasswordCorrect {
+		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
+
+	accessToken, _ := helper.GenerateToken(existedUser, 24*time.Hour)
+	refreshToken, _ := helper.GenerateToken(existedUser, 7*24*time.Hour)
+
+	existedUser.Refresh_token = &refreshToken
+	existedUser.Token = &accessToken
+	existedUser.Password = nil
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(existedUser)
 }
 
 func SignUp(w http.ResponseWriter, r *http.Request) {
@@ -52,11 +89,25 @@ func SignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var existingUser models.User
-	err = userCollection.FindOne(context.TODO(), bson.M{"$or": []bson.M{{"email": user.Emil}, {"phone": user.Phone}}}).Decode(&existingUser)
+	userCountEmail, err := userCollection.CountDocuments(context.TODO(), bson.M{"email": user.Emil})
+	if err != nil {
+		http.Error(w, "Internal server error", 404)
+		return
+	}
+	if userCountEmail > 0 {
+		http.Error(w, "User Already exists with this email", http.StatusConflict)
+		return
+	}
 
-	if err == nil {
-		http.Error(w, "User already exist", http.StatusConflict)
+	userCountPhone, err := userCollection.CountDocuments(context.TODO(), bson.M{"phone": user.Phone})
+
+	if err != nil {
+		http.Error(w, "Internal server error", 404)
+		return
+	}
+
+	if userCountPhone > 0 {
+		http.Error(w, "User Already exists with this phone Number", http.StatusConflict)
 		return
 	}
 
@@ -68,8 +119,8 @@ func SignUp(w http.ResponseWriter, r *http.Request) {
 	}
 	*user.Password = string(hashedPassword)
 
-	accessToken, err := helper.GenerateToken(user, 15*time.Minute)
-	refreshToken, err := helper.GenerateToken(user, 7*24*time.Minute)
+	accessToken, _ := helper.GenerateToken(user, 15*time.Minute)
+	refreshToken, _ := helper.GenerateToken(user, 7*24*time.Minute)
 
 	user.Token = &accessToken
 	user.Refresh_token = &refreshToken
