@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-playground/validator/v10"
@@ -15,6 +16,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,49 +34,13 @@ func VerifyPassword(inComingPassword string, password string) (bool, string) {
 	return true, "Correct Password"
 }
 
-func Login(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
-	var user models.User
-	var existedUser models.User
-	defer cancel()
-	err := json.NewDecoder(r.Body).Decode(&user)
-
-	if err != nil {
-		http.Error(w, "pass the email and password", http.StatusNotFound)
-		return
-	}
-
-	err = userCollection.FindOne(ctx, bson.M{"email": user.Emil}).Decode(&existedUser)
-
-	if err != nil {
-		http.Error(w, "User Not found", http.StatusNotFound)
-		return
-	}
-	isPasswordCorrect, msg := VerifyPassword(*user.Password, *existedUser.Password)
-
-	if !isPasswordCorrect {
-		http.Error(w, msg, http.StatusNotFound)
-		return
-	}
-
-	accessToken, _ := helper.GenerateToken(existedUser, 24*time.Hour)
-	refreshToken, _ := helper.GenerateToken(existedUser, 7*24*time.Hour)
-
-	existedUser.Refresh_token = &refreshToken
-	existedUser.Token = &accessToken
-	existedUser.Password = nil
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(existedUser)
-}
-
 func SignUp(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Sign up function works")
 	var user models.User
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		fmt.Println("Error", err)
-		http.Error(w, "Error in Sending data", 404)
+		http.Error(w, "Error in decoding data", 404)
 	}
 	// validate the user data
 	//  after getting data check user is already exist or not
@@ -141,8 +107,80 @@ func SignUp(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 }
 
-func GetUsers(w http.ResponseWriter, r *http.Request) {
+func Login(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	var user models.User
+	var existedUser models.User
+	defer cancel()
+	err := json.NewDecoder(r.Body).Decode(&user)
 
+	if err != nil {
+		http.Error(w, "pass the email and password", http.StatusNotFound)
+		return
+	}
+
+	err = userCollection.FindOne(ctx, bson.M{"email": user.Emil}).Decode(&existedUser)
+
+	if err != nil {
+		http.Error(w, "User Not found", http.StatusNotFound)
+		return
+	}
+	isPasswordCorrect, msg := VerifyPassword(*user.Password, *existedUser.Password)
+
+	if !isPasswordCorrect {
+		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
+
+	accessToken, _ := helper.GenerateToken(existedUser, 24*time.Hour)
+	refreshToken, _ := helper.GenerateToken(existedUser, 7*24*time.Hour)
+
+	existedUser.Refresh_token = &refreshToken
+	existedUser.Token = &accessToken
+	existedUser.Password = nil
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(existedUser)
+}
+
+func GetUsers(w http.ResponseWriter, r *http.Request) {
+	err := helper.CheckUserType(r, "ADMIN")
+	if err != nil {
+		http.Error(w, " You are not able to access the Data", 404)
+		return
+	}
+
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || limit < 1 {
+		limit = 10
+	}
+	skip := (page - 1) * limit
+	options := options.Find().SetSkip(int64(skip)).SetLimit(int64(limit))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+
+	var users []models.User
+	cursor, err := userCollection.Find(ctx, bson.M{}, options)
+	defer cancel()
+
+	if err != nil {
+		http.Error(w, "Getting error in finding user", 404)
+		return
+	}
+
+	defer cursor.Close(ctx)
+	err = cursor.All(ctx, &users)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotExtended)
+	}
+
+	w.Header().Set("Context-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(users)
 }
 
 func GetUser(w http.ResponseWriter, r *http.Request) {
